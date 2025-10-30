@@ -64,7 +64,6 @@ class SchunkFmsDriver:
         self._listener_thread = None
         self._listener_stop = threading.Event()
 
-        self._process_callbacks = []
         self._latest_process = None
 
         self._lock = threading.Lock()         # protects internal state like callbacks/latest_process/_expected_seq/_send_seq
@@ -209,11 +208,12 @@ class SchunkFmsDriver:
                     self._pending_responses.pop(cmd_id, None)
                 return bytes(resp)
 
-    def start_tcp_stream(self):
+    def start_tcp_stream(self, callback):
         """
         Send command 0x10 to start TCP process data streaming.
         Returns the error code as integer.
         """
+        self._tcp_stream_callback = callback
         resp = self.send_command(0x10, b'')
         if len(resp) < 2:
             raise SensorProtocolError("Start stream response too short")
@@ -237,6 +237,7 @@ class SchunkFmsDriver:
             rospy.logwarn("Stop stream returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Stop stream accepted")
+            self._tcp_stream_callback = None
         return int(err)
     
     def tare(self):
@@ -321,11 +322,12 @@ class SchunkFmsDriver:
             rospy.loginfo("Noise filter %d selected", filter_number)
         return int(err)
 
-    def start_udp_stream(self):
+    def start_udp_stream(self, callback):
         """
         Send command 0x40 to start UDP process data streaming.
         Returns the error code as integer.
         """
+        self._udp_stream_callback = callback
         resp = self.send_command(0x40, b'')
         if len(resp) < 2:
             raise SensorProtocolError("Start UDP stream response too short")
@@ -349,6 +351,7 @@ class SchunkFmsDriver:
             rospy.logwarn("Stop UDP stream returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("UDP streaming stopped")
+            self._udp_stream_callback = None
         return int(err)
 
     def read_parameter(self, index: int, subindex: int):
@@ -781,25 +784,6 @@ class SchunkFmsDriver:
         err, value = self.read_parameter(index, subindex)
         return err, chr(struct.unpack('<B', value)[0]) if err == 0 and len(value) >= 1 else None
 
-
-
-    def register_process_callback(self, fn):
-        """
-        Register a callback to be invoked on incoming process data.
-        Signature: fn(process_data_dict)
-        """
-        if not callable(fn):
-            raise ValueError("Callback must be callable")
-        with self._lock:
-            self._process_callbacks.append(fn)
-
-    def get_latest_process_data(self):
-        """
-        Return the latest process data dict or None. Returns a shallow copy.
-        """
-        with self._lock:
-            return None if self._latest_process is None else dict(self._latest_process)
-
     # --- Internal helpers ---
 
     def _recv_all(self, n):
@@ -903,23 +887,12 @@ class SchunkFmsDriver:
                 rospy.logdebug("Empty payload received")
                 continue
             packet_id = payload[0]
-            if packet_id == PROCESS_PACKET_ID:
+            if packet_id == PROCESS_PACKET_ID and self._tcp_stream_callback:
                 try:
-                    proc = self._parse_process_data(payload, seq)
+                    self._tcp_stream_callback(payload)
                 except Exception as e:
-                    rospy.logerr("Failed to parse process data: %s", str(e))
+                    rospy.logerr("TCP Callback raised exception: %s", str(e))
                     continue
-                with self._lock:
-                    self._latest_process = proc
-                # Call callbacks outside lock
-                callbacks = []
-                with self._lock:
-                    callbacks.extend(self._process_callbacks)
-                for cb in callbacks:
-                    try:
-                        cb(dict(proc))
-                    except Exception as e:
-                        rospy.logerr("Process callback raised exception: %s", str(e))
             else:
                 # Unknown/unexpected packet (not a process packet and not a pending response).
                 # Ignore but log at debug level.
@@ -927,7 +900,7 @@ class SchunkFmsDriver:
 
         rospy.logdebug("Listener thread exiting")
 
-    def _parse_process_data(self, payload: bytes, seq: int):
+    def parse_process_data(self, payload: bytes):
         """
         Parse process data payload.
 
@@ -944,9 +917,6 @@ class SchunkFmsDriver:
         # Minimum user payload length for process data is 29 bytes (0..28)
         if len(payload) < 29:
             raise SensorProtocolError("Process payload too short")
-        # Status double word (4 bytes) little-endian
-        status_dw = struct.unpack_from('<I', payload, 1)[0]
-        status_byte1 = payload[1]
         fx = struct.unpack_from('<f', payload, 5)[0]
         fy = struct.unpack_from('<f', payload, 9)[0]
         fz = struct.unpack_from('<f', payload, 13)[0]
@@ -955,25 +925,20 @@ class SchunkFmsDriver:
         tz = struct.unpack_from('<f', payload, 25)[0]
 
         proc = {
-            'seq': int(seq),
-            'status_dword': int(status_dw),
-            'status_byte': int(status_byte1),
             'fx': float(fx),
             'fy': float(fy),
             'fz': float(fz),
             'tx': float(tx),
             'ty': float(ty),
             'tz': float(tz),
-            'raw_bytes': bytes(payload),
         }
         return proc
 
-# --- Example ROS node usage ---
-
-def example_process_callback(data):
-    # data is a dict with fx, fy, fz, tx, ty, tz
-    rospy.loginfo("Process data: fx=%.3f N fy=%.3f N fz=%.3f N tx=%.3f Nm ty=%.3f Nm tz=%.3f Nm",
-                  data['fx'], data['fy'], data['fz'], data['tx'], data['ty'], data['tz'])
+    def example_process_callback(self, data):
+        # data is a dict with fx, fy, fz, tx, ty, tz
+        parsed_data = self.parse_process_data(data)
+        rospy.loginfo("Process data: fx=%.3f N fy=%.3f N fz=%.3f N tx=%.3f Nm ty=%.3f Nm tz=%.3f Nm",
+                    parsed_data['fx'], parsed_data['fy'], parsed_data['fz'], parsed_data['tx'], parsed_data['ty'], parsed_data['tz'])
 
 def main():
     rospy.init_node('schunk_fms_driver_node', anonymous=True, log_level=rospy.DEBUG)
@@ -987,9 +952,9 @@ def main():
     except Exception as e:
         rospy.logerr("Could not connect to sensor: %s", str(e))
         return
-    driver.register_process_callback(example_process_callback)
+
     try:
-        err = driver.start_tcp_stream()
+        err = driver.start_tcp_stream(driver.example_process_callback)
         if err != 0:
             rospy.logerr("Start stream failed with error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
         else:
