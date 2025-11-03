@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<launch>
+
+    <group ns="fts">
+        <node name="fts_driver_node" pkg="fts_driver_visus" type="fts_driver_visus_node.py" output="screen">
+            <param name="ip" value="192.168.2.113"/>
+        </node>
+    </group>
+
+</launch>
