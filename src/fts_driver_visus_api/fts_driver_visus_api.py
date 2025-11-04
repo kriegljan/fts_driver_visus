@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 import socket
 import struct
 import threading
@@ -31,6 +31,9 @@ SYNC_BYTES = b'\xFF\xFF'
 HEADER_LEN = 2 + 2 + 2  # sync(2) + packet_counter(2) + length(2) == 6 bytes
 PROCESS_PACKET_ID = 0x01
 
+UDP_PORT=54843
+UDP_MESSAGE_SIZE=35
+
 # Timeouts defaults
 DEFAULT_CONNECT_TIMEOUT = 5.0
 DEFAULT_RW_TIMEOUT = 5.0
@@ -41,6 +44,9 @@ class SensorProtocolError(Exception):
 
 class SensorConnectionError(Exception):
     """Socket/connect related error."""
+    pass
+class SensorConnectionTimeout(Exception):
+    """Socket/connect timeout."""
     pass
 
 class SchunkFmsDriver:
@@ -66,12 +72,15 @@ class SchunkFmsDriver:
 
         self._latest_process = None
 
-        self._lock = threading.Lock()         # protects internal state like callbacks/latest_process/_expected_seq/_send_seq
-        self._recv_lock = threading.Lock()    # ensures only one reader (listener) reads at once (listener always reads)
         self._pending_lock = threading.Lock() # protects _pending_responses dict
 
         self._expected_seq = None             # for packet loss detection on incoming packets
         self._send_seq = 0                    # internal outgoing packet counter (0..65535)
+
+        # UDP stream state
+        self._udp_thread = None
+        self._udp_socket = None
+        self._udp_running = False
 
         # pending responses: seq -> {'cond': threading.Condition(), 'response': bytes or None}
         self._pending_responses = {}
@@ -82,6 +91,7 @@ class SchunkFmsDriver:
         Raises SensorConnectionError on failure.
         """
         rospy.loginfo("Connecting to sensor at %s:%d", ip, port)
+        self.ip = ip
         if self.sock:
             raise SensorConnectionError("Already connected")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -147,9 +157,8 @@ class SchunkFmsDriver:
             timeout = self.rw_timeout
 
         # Generate an incremental 16-bit send sequence
-        with self._lock:
-            self._send_seq = (self._send_seq + 1) & 0xFFFF
-            seq = self._send_seq
+        self._send_seq = (self._send_seq + 1) & 0xFFFF
+        seq = self._send_seq
 
         # Build user payload: command id (1 byte) + payload
         cmd_id = cmd_id & 0xFF # limit cmd_id to 1 byte
@@ -171,7 +180,8 @@ class SchunkFmsDriver:
 
         # Send the packet
         rospy.logdebug("Sending command 0x%02X seq=%d len=%d", cmd_id, seq, length)
-        rospy.logdebug(f"Sending message: {packet}")
+        rospy.logdebug(f"Sending message: {packet.hex()}")
+        rospy.logdebug(f"Consisting of: {header.hex()} + {user_payload.hex()}")
         try:
             self.sock.settimeout(self.rw_timeout)
             self.sock.sendall(packet)
@@ -324,10 +334,24 @@ class SchunkFmsDriver:
 
     def start_udp_stream(self, callback):
         """
+        Open udp socket and start listening
         Send command 0x40 to start UDP process data streaming.
         Returns the error code as integer.
         """
+
+        if self._udp_running:
+            return  # already running
+        self._udp_running = True
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(('', UDP_PORT))
+        s.settimeout(DEFAULT_CONNECT_TIMEOUT)
+        self._udp_socket = s
+        self._udp_listener_stop = threading.Event()
         self._udp_stream_callback = callback
+        self._udp_thread = threading.Thread(target=self._udp_listener_loop, daemon=True)
+        self._udp_thread.start()
+    
         resp = self.send_command(0x40, b'')
         if len(resp) < 2:
             raise SensorProtocolError("Start UDP stream response too short")
@@ -338,11 +362,20 @@ class SchunkFmsDriver:
             rospy.loginfo("UDP streaming started")
         return int(err)
 
+
     def stop_udp_stream(self):
         """
         Send command 0x41 to stop UDP process data streaming.
         Returns the error code as integer.
         """
+        # cluse socket and stop threads
+        if not self._udp_socket:
+            return
+        self._udp_listener_stop.set()
+        if self._udp_thread:
+            self._udp_thread.join()
+        self._udp_running = False
+
         resp = self.send_command(0x41, b'')
         if len(resp) < 2:
             raise SensorProtocolError("Stop UDP stream response too short")
@@ -352,6 +385,14 @@ class SchunkFmsDriver:
         else:
             rospy.loginfo("UDP streaming stopped")
             self._udp_stream_callback = None
+
+        try:
+            self._udp_socket.close()
+        except Exception:
+            raise
+        
+        self._udp_socket = None
+        self._udp_thread = None
         return int(err)
 
     def read_parameter(self, index: int, subindex: int):
@@ -797,7 +838,7 @@ class SchunkFmsDriver:
             try:
                 chunk = self.sock.recv(remaining)
             except socket.timeout:
-                raise SensorConnectionError("Socket read timeout")
+                raise SensorConnectionTimeout("Socket read timeout")
             except Exception as e:
                 raise SensorConnectionError("Socket read error: " + str(e))
             if not chunk:
@@ -805,51 +846,79 @@ class SchunkFmsDriver:
             data.extend(chunk)
             remaining -= len(chunk)
         return bytes(data)
+    
+    def _udp_listener_loop(self):
+        while not self._udp_listener_stop.is_set():
+            try:
+                message = self._udp_socket.recvfrom(4096)
+                data = message[0]
+                # data = self._udp_socket.recvfrom(UDP_MESSAGE_SIZE)
+                rospy.logdebug(f"got message of size {len(data)}: {data.hex()}")
+            except socket.timeout:
+                if not self._udp_listener_stop.is_set():
+                    raise SensorConnectionTimeout("UDP socket read timeout")
+            except Exception as e:
+                if not self._udp_listener_stop.is_set():
+                    raise SensorConnectionError("Socket read error: " + str(e))
+            
+            packet_id = data[HEADER_LEN] # packet id comes after Header
+            if packet_id == PROCESS_PACKET_ID and self._udp_stream_callback:
+                try:
+                    self._udp_stream_callback(data[HEADER_LEN:])
+                except Exception as e:
+                    rospy.logerr("UDP Callback raised exception: %s", str(e))
+                    continue
+            else:
+                # Unknown/unexpected packet (not a process packet and not a pending response).
+                # Ignore but log at debug level.
+                rospy.logdebug("Non-process, non-pending packet on UDP received with packet_id=0x%02X; ignored", packet_id)
 
     def _listener_loop(self):
         """
         Listener thread: continuously read packets (header + payload), then either:
           - deliver the packet to a waiting send_command (matching seq), or
           - parse it as process-data (packet_id == 0x01) and call callbacks.
-        The listener always acquires recv lock while reading header+payload to ensure socket reads
-        are serialized and consistent.
         """
         rospy.logdebug("Listener thread started")
         while not self._listener_stop.is_set():
             try:
-                # Always read header+payload atomically; serialize reads with recv lock.
-                with self._recv_lock:
-                    header = self._recv_all(HEADER_LEN)
-                    if len(header) != HEADER_LEN:
-                        rospy.logwarn("Invalid header length received: %d", len(header))
-                        continue
-                    if header[0:2] != SYNC_BYTES:
-                        rospy.logwarn("Invalid sync bytes in incoming packet")
-                        # attempt to continue reading next packet
-                        continue
-                    seq = struct.unpack_from('<H', header, 2)[0]
-                    length = struct.unpack_from('<H', header, 4)[0]
-                    payload = self._recv_all(length)
-                    rospy.logdebug(f"got message: {header} {payload}")
+                # Always read header+payload atomically;
+                header = self._recv_all(HEADER_LEN)
+                if len(header) != HEADER_LEN:
+                    rospy.logwarn("Invalid header length received: %d", len(header))
+                    continue
+                if header[0:2] != SYNC_BYTES:
+                    rospy.logwarn("Invalid sync bytes in incoming packet")
+                    # attempt to continue reading next packet
+                    continue
+                seq = struct.unpack_from('<H', header, 2)[0]
+                length = struct.unpack_from('<H', header, 4)[0]
+                payload = self._recv_all(length)
+                rospy.logdebug(f"got message: {header.hex()} {payload.hex()}")
+            except SensorConnectionTimeout as e:
+                # timeout -> try again
+                continue
             except SensorConnectionError as e:
-                rospy.logerr("Listener read error: %s", str(e))
-                # Deliver exception to any pending requester(s) and then break
-                with self._pending_lock:
-                    for s, entry in list(self._pending_responses.items()):
-                        with entry['cond']:
-                            entry['response'] = SensorConnectionError("Listener encountered read error")
-                            entry['cond'].notify()
-                    self._pending_responses.clear()
-                break
+                if not self._listener_stop.is_set():
+                    rospy.logerr("Listener read error: %s", str(e))
+                    # Deliver exception to any pending requester(s)
+                    with self._pending_lock:
+                        for s, entry in list(self._pending_responses.items()):
+                            with entry['cond']:
+                                entry['response'] = SensorConnectionError("Listener encountered read error")
+                                entry['cond'].notify()
+                        self._pending_responses.clear()
+                continue
             except Exception as e:
-                rospy.logerr("Unexpected listener error: %s", str(e))
-                with self._pending_lock:
-                    for s, entry in list(self._pending_responses.items()):
-                        with entry['cond']:
-                            entry['response'] = SensorConnectionError("Listener unexpected error")
-                            entry['cond'].notify()
-                    self._pending_responses.clear()
-                break
+                if not self._listener_stop.is_set():
+                    rospy.logerr("Unexpected listener error: %s", str(e))
+                    with self._pending_lock:
+                        for s, entry in list(self._pending_responses.items()):
+                            with entry['cond']:
+                                entry['response'] = SensorConnectionError("Listener unexpected error")
+                                entry['cond'].notify()
+                        self._pending_responses.clear()
+                continue
 
             if len(payload) != length:
                 rospy.logwarn("Payload length mismatch expected=%d got=%d", length, len(payload))
@@ -872,15 +941,14 @@ class SchunkFmsDriver:
                 continue
 
             # Packet loss detection using header sequence number
-            with self._lock:
-                if self._expected_seq is None:
+            if self._expected_seq is None:
+                self._expected_seq = (seq + 1) & 0xFFFF
+            else:
+                if seq != self._expected_seq:
+                    rospy.logwarn("Packet loss detected expected=%d received=%d", self._expected_seq, seq)
                     self._expected_seq = (seq + 1) & 0xFFFF
                 else:
-                    if seq != self._expected_seq:
-                        rospy.logwarn("Packet loss detected expected=%d received=%d", self._expected_seq, seq)
-                        self._expected_seq = (seq + 1) & 0xFFFF
-                    else:
-                        self._expected_seq = (seq + 1) & 0xFFFF
+                    self._expected_seq = (seq + 1) & 0xFFFF
 
             # Process user payload: payload[0] is packet id
             if length == 0:

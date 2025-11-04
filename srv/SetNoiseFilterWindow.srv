@@ -1,0 +1,4 @@
+int8 window_size
+---
+bool success
+string message

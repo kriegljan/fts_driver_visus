@@ -4,8 +4,9 @@ import threading
 import traceback
 from std_srvs.srv import Trigger, TriggerResponse
 from geometry_msgs.msg import WrenchStamped
+from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse
 
-from fts_driver_visus import SchunkFmsDriver
+from fts_driver_visus_api.fts_driver_visus_api import SchunkFmsDriver, ERROR_CODES
 
 class FtsRosNode:
     def __init__(self):
@@ -36,6 +37,7 @@ class FtsRosNode:
         rospy.Service('tare', Trigger, self._handle_tare)
         rospy.Service('restart', Trigger, self._handle_restart)
         rospy.Service('reset_tare', Trigger, self._handle_reset_tare)
+        rospy.Service('set_noise_filter_window', SetNoiseFilterWindow, self._handle_set_noise_filter_window)
 
         rospy.on_shutdown(self._on_shutdown)
 
@@ -133,12 +135,14 @@ class FtsRosNode:
     def _start_stream_protocol(self, protocol):
         with self._stream_lock:
             if self._stream_running:
-                return False, "stream already running"
+                return False, f"{self._stream_protocol} stream already running"
             try:
                 if protocol == 'tcp':
-                    self.driver.start_tcp_stream(callback=self._stream_callback_publish_wrench)
+                    err = self.driver.start_tcp_stream(callback=self._stream_callback_publish_wrench)
                 else:
-                    self.driver.start_udp_stream(callback=self._stream_callback_publish_wrench)
+                    err = self.driver.start_udp_stream(callback=self._stream_callback_publish_wrench)
+                if err != 0:
+                    raise Exception(f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
             except Exception as e:
                 rospy.logerr("Failed to start %s stream: %s\n%s", protocol, str(e), traceback.format_exc())
                 return False, str(e)
@@ -152,11 +156,14 @@ class FtsRosNode:
                 return False, "not running or different protocol"
             try:
                 if protocol == 'tcp':
-                    self.driver.stop_tcp_stream()
+                    err = self.driver.stop_tcp_stream()
                 else:
-                    self.driver.stop_udp_stream()
+                    err = self.driver.stop_udp_stream()
+                if err != 0:
+                    raise Exception(f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
             except Exception as e:
                 rospy.logerr("Failed to stop %s stream: %s\n%s", protocol, str(e), traceback.format_exc())
+            # assume that the stream has stop anyways (to allow for restart)
             self._stream_running = False
             self._stream_protocol = None
             return True, "stopped"
@@ -179,7 +186,9 @@ class FtsRosNode:
 
     def _handle_tare(self, req):
         try:
-            self.driver.tare()
+            err = self.driver.tare()
+            if err != 0:
+                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
             return TriggerResponse(success=True, message="tare executed")
         except Exception as e:
             rospy.logerr("Tare failed: %s", traceback.format_exc())
@@ -187,7 +196,9 @@ class FtsRosNode:
 
     def _handle_restart(self, req):
         try:
-            self.driver.restart()
+            err = self.driver.restart()
+            if err != 0:
+                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
             return TriggerResponse(success=True, message="restart executed")
         except Exception as e:
             rospy.logerr("Restart failed: %s", traceback.format_exc())
@@ -195,11 +206,26 @@ class FtsRosNode:
 
     def _handle_reset_tare(self, req):
         try:
-            self.driver.reset_tare()
+            err = self.driver.reset_tare()
+            if err != 0:
+                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
             return TriggerResponse(success=True, message="reset_tare executed")
         except Exception as e:
             rospy.logerr("Reset tare failed: %s", traceback.format_exc())
             return TriggerResponse(success=False, message=str(e))
+
+    def _handle_set_noise_filter_window(self, req):
+        try:
+            valid_values = [1,2,4,8,16]
+            if not req.window_size in valid_values:
+                return SetNoiseFilterWindowResponse(success=False, message=f"Window size {req.window_size} not allowed! Allowed values: {valid_values}")
+            err = self.driver.set_noise_filter(valid_values.index(req.window_size))
+            if err != 0:
+                return SetNoiseFilterWindowResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+            return SetNoiseFilterWindowResponse(success=True, message="set_noise_filter_window executed")
+        except Exception as e:
+            rospy.logerr("Reset tare failed: %s", traceback.format_exc())
+            return SetNoiseFilterWindowResponse(success=False, message=str(e))
 
     def _on_shutdown(self):
         rospy.loginfo("Shutting down FTS ROS node...")
@@ -210,9 +236,7 @@ class FtsRosNode:
             self._stop_stream_protocol(proto)
         self.driver.disconnect()
 
-def main():
-    node = FtsRosNode()
-    rospy.spin()
 
 if __name__ == '__main__':
-    main()
+    node = FtsRosNode()
+    rospy.spin()

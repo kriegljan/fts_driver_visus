@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import rospy
-from fts_driver_visus import SchunkFmsDriver  # Adjust import if needed
+from drivers.fts_driver_visus.src.fts_driver_visus_api.fts_driver_visus_api import SchunkFmsDriver  # Adjust import if needed
 
 def main():
     rospy.init_node('schunk_fms_test_reader', anonymous=True)
