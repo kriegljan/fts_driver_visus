@@ -709,7 +709,7 @@ class SchunkFmsDriver:
         """
         if rate not in [0, 1, 2, 3]:
             raise ValueError("UDP rate must be 0 (1kHz), 1 (500Hz), 2 (250Hz), or 3 (100Hz)")
-        return self.write_enum(0x1020, 1, rate)
+        return self.write_enum(0x1020, 0, rate)
 
     def get_force_torque_scaling(self):
         """

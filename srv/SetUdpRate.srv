@@ -1,0 +1,4 @@
+uint16 rate
+---
+bool success
+string message

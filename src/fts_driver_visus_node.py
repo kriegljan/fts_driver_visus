@@ -4,7 +4,7 @@ import threading
 import traceback
 from std_srvs.srv import Trigger, TriggerResponse
 from geometry_msgs.msg import WrenchStamped
-from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse
+from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse, SetUdpRate, SetUdpRateResponse
 
 from fts_driver_visus_api.fts_driver_visus_api import SchunkFmsDriver, ERROR_CODES
 
@@ -38,6 +38,7 @@ class FtsRosNode:
         rospy.Service('restart', Trigger, self._handle_restart)
         rospy.Service('reset_tare', Trigger, self._handle_reset_tare)
         rospy.Service('set_noise_filter_window', SetNoiseFilterWindow, self._handle_set_noise_filter_window)
+        rospy.Service('set_udp_rate', SetUdpRate, self._handle_set_udp_rate)
 
         rospy.on_shutdown(self._on_shutdown)
 
@@ -222,10 +223,23 @@ class FtsRosNode:
             err = self.driver.set_noise_filter(valid_values.index(req.window_size))
             if err != 0:
                 return SetNoiseFilterWindowResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
-            return SetNoiseFilterWindowResponse(success=True, message="set_noise_filter_window executed")
+            return SetNoiseFilterWindowResponse(success=True, message="noise filter set")
         except Exception as e:
-            rospy.logerr("Reset tare failed: %s", traceback.format_exc())
+            rospy.logerr("Set noise filter: %s", traceback.format_exc())
             return SetNoiseFilterWindowResponse(success=False, message=str(e))
+
+    def _handle_set_udp_rate(self, req):
+        try:
+            valid_values = [1000,500,250,100]
+            if not req.rate in valid_values:
+                return SetUdpRateResponse(success=False, message=f"Window size {req.window_size} not allowed! Allowed values: {valid_values}")
+            err = self.driver.set_udp_output_rate(valid_values.index(req.rate))
+            if err != 0:
+                return SetUdpRateResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+            return SetUdpRateResponse(success=True, message="Udp rate set")
+        except Exception as e:
+            rospy.logerr("Set udp rate failed: %s", traceback.format_exc())
+            return SetUdpRateResponse(success=False, message=str(e))
 
     def _on_shutdown(self):
         rospy.loginfo("Shutting down FTS ROS node...")
