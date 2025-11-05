@@ -4,6 +4,8 @@
     <group ns="fts">
         <node name="fts_driver_node" pkg="fts_driver_visus" type="fts_driver_visus_node.py" output="screen">
             <param name="ip" value="192.168.2.113"/>
+            <param name="use_udp" value="False"/>
+            <param name="frame_id" value="fts_sensor"/>
         </node>
     </group>
 
