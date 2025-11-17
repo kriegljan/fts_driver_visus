@@ -61,6 +61,7 @@ add_service_files(
   SetUdpRate.srv
   SetTCP.srv
   SetToolSettingsSlot.srv
+  SaveDeviceInfoToYAML.srv
 )
 
 ## Generate actions in the 'action' folder

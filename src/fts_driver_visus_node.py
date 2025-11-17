@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 import rospy
+import yaml
 import threading
 import traceback
 from std_srvs.srv import Trigger, TriggerResponse
 from geometry_msgs.msg import WrenchStamped
-from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse, SetUdpRate, SetUdpRateResponse, SetTCP, SetTCPResponse, SetToolSettingsSlot, SetToolSettingsSlotResponse
+from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse, SetUdpRate, SetUdpRateResponse, SetTCP, SetTCPResponse, SetToolSettingsSlot, SetToolSettingsSlotResponse, SaveDeviceInfoToYAML, SaveDeviceInfoToYAMLResponse
 from tf.transformations import euler_from_quaternion
 
 from fts_driver_visus_api.fts_driver_visus_api import SchunkFmsDriver, ERROR_CODES
@@ -42,6 +43,7 @@ class FtsRosNode:
         rospy.Service('set_udp_rate', SetUdpRate, self._handle_set_udp_rate)
         rospy.Service('set_tcp', SetTCP, self._handle_set_tcp)
         rospy.Service('set_tool_settings_slot', SetToolSettingsSlot, self._handle_set_tool_settings_slot)
+        rospy.Service("save_device_info_to_yaml", SaveDeviceInfoToYAML, self._handle_save)
 
         rospy.on_shutdown(self._on_shutdown)
 
@@ -114,6 +116,66 @@ class FtsRosNode:
         rospy.loginfo(f"\tIP Mode: {ip_parsed}")
 
         rospy.loginfo(f"\tCustomer Interface Type: {self.driver.get_customer_interface_type()}")
+
+    def _dump_device_info(self, yaml_path: str) -> None:
+        """Collect all driver information and write it to *yaml_path*."""
+
+        data = {
+            "FTS_Parameters": {
+                "Product_Name":            self.driver.get_product_name(),
+                "Product_Text":            self.driver.get_product_text(),
+                "Device_ID":               self.driver.get_device_id(),
+                "Product_ID":              self.driver.get_product_id(),
+                "Serial_Number":           self.driver.get_serial_number(),
+                "Hardware_Version":        self.driver.get_hardware_version(),
+                "Firmware_Version":        self.driver.get_firmware_version(),
+                "Internal_Temperature_C": self.driver.get_internal_temperature(),
+            },
+            "Tool_Settings_Lock": {
+                "Locked": self.driver.get_tool_settings_locked()
+            },
+            "Tool_Center_Points": [],
+            "Overrange_Limits":   [],
+            "Interface_Box_Parameters": {
+                "Vendor_Name":        self.driver.get_interface_vendor_name(),
+                "Vendor_Text":        self.driver.get_interface_vendor_text(),
+                "Product_ID":         self.driver.get_interface_product_id(),
+                "Serial_Number":      self.driver.get_interface_serial_number(),
+                "Hardware_Version":   self.driver.get_interface_hardware_version(),
+                "Firmware_Version":   self.driver.get_interface_firmware_version(),
+                "Function_Tag":       self.driver.get_interface_function_tag(),
+                "Location_Tag":       self.driver.get_interface_location_tag(),
+            },
+            "Interface_Box_Configuration": {}
+        }
+
+        for i in range(4):
+            tcp = self.driver.get_tool_center_point(slot=i) or {}
+            data["Tool_Center_Points"].append({f"Slot_{i}": tcp})
+
+            limits = self.driver.get_user_overrange_limits(slot=i) or {}
+            data["Overrange_Limits"].append({f"Slot_{i}": limits})
+
+        rate_map = {0: "1 kHz", 1: "500 Hz", 2: "250 Hz", 3: "100 Hz"}
+        rate = self.driver.get_udp_output_rate()
+        data["Interface_Box_Configuration"]["UDP_Output_Rate"] = rate_map.get(rate,
+                                                                            f"[invalid: {rate}]")
+
+        data["Interface_Box_Configuration"]["Force_Torque_Scaling_Factor"] = (
+            self.driver.get_force_torque_scaling()
+        )
+
+        ip_mode = "DHCP" if self.driver.get_use_static_ip() else "Static IP"
+        data["Interface_Box_Configuration"]["IP_Mode"] = ip_mode
+
+        data["Interface_Box_Configuration"]["Customer_Interface_Type"] = (
+            self.driver.get_customer_interface_type()
+        )
+        
+        with open(yaml_path, "w") as f:
+            yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+        rospy.loginfo(f"Device information written to {yaml_path}")
+
 
     def _stream_callback_publish_wrench(self, data):
         try:
@@ -261,6 +323,14 @@ class FtsRosNode:
 
         return SetTCPResponse(success=True, message=f"")
 
+    def _handle_save(self, req):
+        yaml_path = req.full_path
+        try:
+            self._dump_device_info((yaml_path))
+            return SaveDeviceInfoToYAMLResponse(True, "File written successfully.")
+        except Exception as e:
+            rospy.logerr("Failed to write YAML: %s", e)
+            return SaveDeviceInfoToYAMLResponse(False, str(e))
 
     def _on_shutdown(self):
         rospy.loginfo("Shutting down FTS ROS node...")
