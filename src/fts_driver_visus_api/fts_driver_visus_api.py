@@ -48,6 +48,12 @@ class SensorConnectionError(Exception):
 class SensorConnectionTimeout(Exception):
     """Socket/connect timeout."""
     pass
+class SensorAPIError(Exception):
+    """Sensor API error"""
+    pass
+class SensorRuntimeError(Exception):
+    """Sensor runtime error"""
+    pass
 
 class SchunkFmsDriver:
     """
@@ -221,7 +227,7 @@ class SchunkFmsDriver:
     def start_tcp_stream(self, callback):
         """
         Send command 0x10 to start TCP process data streaming.
-        Returns the error code as integer.
+        Throws exception on error.
         """
         self._tcp_stream_callback = callback
         resp = self.send_command(0x10, b'')
@@ -230,14 +236,14 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Start stream returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Start stream accepted")
-        return int(err)
 
     def stop_tcp_stream(self):
         """
         Send command 0x11 to stop TCP process data streaming.
-        Returns the error code as integer.
+        Throws exception on error.
         """
         resp = self.send_command(0x11, b'')
         if len(resp) < 2:
@@ -245,15 +251,15 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Stop stream returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Stop stream accepted")
             self._tcp_stream_callback = None
-        return int(err)
     
     def tare(self):
         """
         Send command 0x12 to tare the force-torque values.
-        Returns the error code as integer.
+        Throws exception on error.
         """
         resp = self.send_command(0x12, b'')
         if len(resp) < 2:
@@ -261,14 +267,14 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Tare returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Tare successful")
-        return int(err)
 
     def reset_tare(self):
         """
         Send command 0x13 to reset tare (remove offset).
-        Returns the error code as integer.
+        Throws exception on error.
         """
         resp = self.send_command(0x13, b'')
         if len(resp) < 2:
@@ -276,14 +282,14 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Reset tare returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Reset tare successful")
-        return int(err)
 
     def restart_module(self):
         """
         Send command 0x20 to restart the sensor module.
-        Returns the error code as integer.
+        Throws exception on error.
         """
         resp = self.send_command(0x20, b'')
         if len(resp) < 2:
@@ -291,14 +297,14 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Restart returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Restart command accepted")
-        return int(err)
 
     def select_tool_settings(self, index: int):
         """
         Send command 0x30 to select a tool settings bank (0–3).
-        Returns the error code as integer.
+        Throws exception on error.
         """
         if not (0 <= index <= 3):
             raise ValueError("Tool settings index must be between 0 and 3")
@@ -309,15 +315,15 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Tool settings select returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Tool settings bank %d selected", index)
-        return int(err)
     
     def set_noise_filter(self, filter_number: int):
         """
         Send command 0x31 to select noise reduction filter.
         Valid values: 0–4 (window sizes: 1, 2, 4, 8, 16).
-        Returns the error code as integer.
+        Throws exception on error.
         """
         if not (0 <= filter_number <= 4):
             raise ValueError("Filter number must be between 0 and 4")
@@ -328,15 +334,15 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Noise filter set returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("Noise filter %d selected", filter_number)
-        return int(err)
 
     def start_udp_stream(self, callback):
         """
         Open udp socket and start listening
         Send command 0x40 to start UDP process data streaming.
-        Returns the error code as integer.
+        Throws exception on error.
         """
 
         if self._udp_running:
@@ -358,15 +364,14 @@ class SchunkFmsDriver:
         err = resp[1]
         if err != 0:
             rospy.logwarn("Start UDP stream returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.loginfo("UDP streaming started")
-        return int(err)
-
 
     def stop_udp_stream(self):
         """
         Send command 0x41 to stop UDP process data streaming.
-        Returns the error code as integer.
+        Throws exception on error.
         """
         # cluse socket and stop threads
         if not self._udp_socket:
@@ -393,12 +398,11 @@ class SchunkFmsDriver:
         
         self._udp_socket = None
         self._udp_thread = None
-        return int(err)
 
     def read_parameter(self, index: int, subindex: int):
         """
         Send command 0xF0 to read a parameter by index and subindex.
-        Returns (error_code, value_bytes) — value_bytes may be empty if error occurred.
+        Returns value_bytes — throws exception on error
         """
         if not (0 <= index <= 0xFFFF):
             raise ValueError("Index must be 0–65535")
@@ -416,15 +420,16 @@ class SchunkFmsDriver:
         value = resp[5:] if err == 0 else b''
         if err != 0:
             rospy.logwarn("Read parameter returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.logdebug("Read parameter index=%d subindex=%d value_len=%d", index, subindex, len(value))
-        return int(err), value
+        return value
 
     def write_parameter(self, index: int, subindex: int, value: bytes):
         """
         Send command 0xF1 to write a parameter by index and subindex.
         Value must be a bytes object.
-        Returns error_code as integer.
+        Throws exception on error.
         """
         if not (0 <= index <= 0xFFFF):
             raise ValueError("Index must be 0–65535")
@@ -443,115 +448,176 @@ class SchunkFmsDriver:
             rospy.logwarn("Write parameter response index/subindex mismatch")
         if err != 0:
             rospy.logwarn("Write parameter returned error %d: %s", err, ERROR_CODES.get(err, "Unknown"))
+            raise SensorAPIError(ERROR_CODES.get(err, "Unknown"))
         else:
             rospy.logdebug("Write parameter index=%d subindex=%d value_len=%d", index, subindex, len(value))
-        return int(err)
+
+    def write_uint8(self, index: int, subindex: int, val: int):
+        self.write_parameter(index, subindex, struct.pack('<B', val))
+
+    def write_uint16(self, index: int, subindex: int, val: int):
+        self.write_parameter(index, subindex, struct.pack('<H', val))
+
+    def write_uint32(self, index: int, subindex: int, val: int):
+        self.write_parameter(index, subindex, struct.pack('<I', val))
+
+    def write_int32(self, index: int, subindex: int, val: int):
+        self.write_parameter(index, subindex, struct.pack('<i', val))
+
+    def write_float(self, index: int, subindex: int, val: float):
+        self.write_parameter(index, subindex, struct.pack('<f', val))
+
+    def write_bool(self, index: int, subindex: int, val: bool):
+        self.write_parameter(index, subindex, struct.pack('<B', int(bool(val))))
+
+    def write_enum(self, index: int, subindex: int, val: int):
+        self.write_parameter(index, subindex, struct.pack('<B', val))
+
+    def write_char(self, index: int, subindex: int, val: str):
+        if not val or len(val) != 1:
+            raise ValueError("CHAR must be a single ASCII character")
+        self.write_parameter(index, subindex, struct.pack('<B', ord(val)))
+    
+    def decode_uint8(self, value):
+        if len(value) == 1:
+            return struct.unpack('<B', value)[0]
+        else:
+            raise ValueError("Value must contain 1 byte")
+        
+    def decode_uint16(self, value):
+        if len(value) == 2:
+            return struct.unpack('<H', value)[0]
+        else:
+            raise ValueError("Value must contain 2 bytes")
+    
+    def decode_uint32(self, value):
+        if len(value) == 4:
+            return struct.unpack('<I', value)[0]
+        else:
+            raise ValueError("Value must contain 4 bytes")
+
+    def decode_int32(self, value):    
+        if len(value) == 4:
+            return struct.unpack('<i', value)[0]
+        else:
+            raise ValueError("Value must contain 4 bytes")
+
+    def decode_float(self, value):    
+        if len(value) == 4:
+            return struct.unpack('<f', value)[0]
+        else:
+            raise ValueError("Value must contain 4 bytes")
+    
+    def decode_bool(self, value):
+        if len(value) == 1:
+            return  bool(struct.unpack('<B', value)[0])
+        else:
+            raise ValueError("Value must contain 1 byte")
+
+    def read_uint8(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_uint8(value)
+
+    def read_uint16(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_uint16(value)
+
+    def read_uint32(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_uint32(value)
+
+    def read_int32(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_int32(value)
+
+    def read_float(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_float(value)
+
+    def read_bool(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_bool(value)
+
+    def read_enum(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return self.decode_uint8(value)
+
+    def read_char(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return chr(self.decode_uint8(value))
+
+    def read_string(self, index: int, subindex: int):
+        value = self.read_parameter(index, subindex)
+        return value.decode('ascii', errors='ignore').rstrip('\x00')
 
     def get_product_name(self):
         """
         Reads parameter 0x0001/0 — Product Name (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x0001, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x0001, 0)
 
     def get_product_text(self):
         """
         Reads parameter 0x0001/1 — Product Text (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x0001, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string (0x0001, 1)
 
     def get_device_id(self):
         """
         Reads parameter 0x0001/2 — Device ID (UINT32).
-        Returns int or None.
+        Returns int.
         """
-        err, value = self.read_parameter(0x0001, 2)
-        if err != 0 or len(value) < 4:
-            return None
-        return struct.unpack('<I', value)[0]
+        return self.read_uint32(0x0001, 2)
 
     def get_product_id(self):
         """
         Reads parameter 0x0001/3 — Product ID (UINT32).
-        Returns int or None.
+        Returns int.
         """
-        err, value = self.read_parameter(0x0001, 3)
-        if err != 0 or len(value) < 4:
-            return None
-        return struct.unpack('<I', value)[0]
+        return self.read_uint32(0x0001, 3)
 
     def get_serial_number(self):
         """
         Reads parameter 0x0002 — Serial Number (CHAR[8]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x0002, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x0002, 0)
 
     def get_hardware_version(self):
         """
         Reads parameter 0x0003/0 — Hardware Version (CHAR[8]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x0003, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x0003, 0)
 
     def get_firmware_version(self):
         """
         Reads parameter 0x0003/1 — Firmware Version (CHAR[16]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x0003, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x0003, 1)
 
     def get_internal_temperature(self):
         """
         Reads parameter 0x0035 — Internal Temperature (FLOAT).
-        Returns float in °C or None.
+        Returns float in °C.
         """
-        err, value = self.read_parameter(0x0035, 0)
-        if err != 0 or len(value) < 4:
-            return None
-        return struct.unpack('<f', value)[0]
+        return self.read_float(0x0035, 0)
 
     def get_tool_settings_locked(self):
         """
-        Reads parameter 0x0060 — Tool Settings Locked (BOOL).
-        Returns True if locked, False if unlocked, or None on error.
+        Reads parameter 0x0060 — Tool Settings Unlocked (BOOL).
+        Returns True if locked, False if unlocked. (Inverts internal function)
         """
-        err, value = self.read_parameter(0x0060, 0)
-        if err != 0 or len(value) < 1:
-            return None
-        return bool(struct.unpack('<B', value)[0])
+        return not self.read_bool(0x0060, 0)
 
     def set_tool_settings_locked(self, locked: bool):
         """
-        Writes parameter 0x0060 — Tool Settings Locked (BOOL).
-        True = locked, False = unlocked.
-        Returns error code.
+        Writes parameter 0x0060 — Tool Settings Unlocked (BOOL). Inverts internal function.
         """
-        val = struct.pack('<B', int(bool(locked)))
-        return self.write_parameter(0x0060, 0, val)
-    
-    def read_float(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<f', value)[0] if err == 0 and len(value) >= 4 else None
-    
-    def write_float(self, index: int, subindex: int, val: float):
-        return self.write_parameter(index, subindex, struct.pack('<f', val))
+        self.write_bool(0x0060, 0, not locked)
     
     def get_tool_center_point(self):
         """
@@ -561,22 +627,18 @@ class SchunkFmsDriver:
         result = {}
         labels = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']
         for i, label in enumerate(labels):
-            err, val = self.read_float(0x0061, i)
-            result[label] = val if err == 0 else None
+            val = self.read_float(0x0061, i)
+            result[label] = val
         return result
 
     def set_tool_center_point(self, tx, ty, tz, rx, ry, rz):
         """
         Writes all 6 subindices of parameter 0x0061 — Tool Center Point.
         Values: tx/ty/tz in meters, rx/ry/rz in radians.
-        Returns dict of error codes per axis.
         """
         values = [tx, ty, tz, rx, ry, rz]
-        result = {}
         for i, val in enumerate(values):
-            err = self.write_float(0x0061, i, val)
-            result[f'subindex_{i}'] = err
-        return result
+            self.write_float(0x0061, i, val)
 
 
     def get_user_overrange_limits(self):
@@ -588,8 +650,8 @@ class SchunkFmsDriver:
         labels = ['fx_pos', 'fx_neg', 'fy_pos', 'fy_neg', 'fz_pos', 'fz_neg',
                 'tx_pos', 'tx_neg', 'ty_pos', 'ty_neg', 'tz_pos', 'tz_neg']
         for i, label in enumerate(labels):
-            err, val = self.read_float(0x0062, i)
-            result[label] = val if err == 0 else None
+            val = self.read_float(0x0062, i)
+            result[label] = val
         return result
 
     def set_user_overrange_limits(self, **kwargs):
@@ -609,94 +671,70 @@ class SchunkFmsDriver:
                 result[label] = 'invalid_label'
                 continue
             idx = label_to_index[label]
-            err = self.write_float(0x0062, idx, value)
-            result[label] = err
-        return result
+            self.write_float(0x0062, idx, value)
+
 
     def get_interface_vendor_name(self):
         """
         Reads parameter 0x1000/0 — Vendor Name (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1000, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x1000, 0)
+
 
     def get_interface_vendor_text(self):
         """
         Reads parameter 0x1000/1 — Vendor Text (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1000, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x1000, 1)
 
     def get_interface_product_id(self):
         """
         Reads parameter 0x1001/0 — Product ID (UINT32).
-        Returns int or None.
+        Returns int.
         """
-        err, value = self.read_parameter(0x1001, 0)
-        if err != 0 or len(value) < 4:
-            return None
-        return struct.unpack('<I', value)[0]
+        return self.read_uint32(0x1001, 0)
 
     def get_interface_serial_number(self):
         """
         Reads parameter 0x3001/1 — Serial Number (CHAR[8]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1001, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x1001, 1)
 
     def get_interface_hardware_version(self):
         """
         Reads parameter 0x1002/0 — Hardware Version (CHAR[8]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1002, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
-
+        return self.read_string(0x1002, 0)
+    
     def get_interface_firmware_version(self):
         """
         Reads parameter 0x1002/1 — Firmware Version (CHAR[16]).
-        Returns string or None.
-        """
-        err, value = self.read_parameter(0x1002, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        Returns string.
+        """ 
+        return self.read_string(0x1002, 1)
 
     def get_interface_function_tag(self):
         """
         Reads parameter 0x1003/0 — Function Tag (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1003, 0)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x1003, 0)
 
     def get_interface_location_tag(self):
         """
         Reads parameter 0x1003/1 — Location Tag (CHAR[30]).
-        Returns string or None.
+        Returns string.
         """
-        err, value = self.read_parameter(0x1003, 1)
-        if err != 0 or len(value) == 0:
-            return None
-        return value.decode('ascii', errors='ignore').rstrip('\x00')
+        return self.read_string(0x1003, 1)
 
     def get_udp_output_rate(self):
         """
         Reads parameter 0x1020/1 — UDP Output Rate (ENUM).
-        Returns int (0–3) or None.
+        Returns parameter value (int) (0-3).
         0 = 1 kHz, 1 = 500 Hz, 2 = 250 Hz, 3 = 100 Hz
         """
         return self.read_enum(0x1020, 0)
@@ -705,16 +743,16 @@ class SchunkFmsDriver:
         """
         Writes parameter 0x1020/1 — UDP Output Rate (ENUM).
         Accepts values: 0 = 1 kHz, 1 = 500 Hz, 2 = 250 Hz, 3 = 100 Hz
-        Returns error code.
+        Returns parameter value (int).
         """
         if rate not in [0, 1, 2, 3]:
             raise ValueError("UDP rate must be 0 (1kHz), 1 (500Hz), 2 (250Hz), or 3 (100Hz)")
-        return self.write_enum(0x1020, 0, rate)
+        self.write_enum(0x1020, 0, rate)
 
     def get_force_torque_scaling(self):
         """
         Reads parameter 0x1021 — Force/Torque Scaling Factor (UINT32).
-        Returns int or None.
+        Returns parameter value (int).
         """
         return self.read_uint32(0x1021, 0)
 
@@ -722,26 +760,25 @@ class SchunkFmsDriver:
         """
         Writes parameter 0x1021 — Force/Torque Scaling Factor (UINT32).
         Valid range: 1 to 1,000,000
-        Returns error code.
+        Returns parameter value (int).
         """
         if not (1 <= factor <= 1_000_000):
             raise ValueError("Scaling factor must be between 1 and 1,000,000")
-        return self.write_uint32(0x1021, 0, factor)
+        self.write_uint32(0x1021, 0, factor)
 
     def get_use_static_ip(self):
         """
         Reads parameter 0x1030 — Use Static IP (BOOL).
-        Returns False = static IP, True = DHCP, or None on error.
+        Returns False = static IP, True = DHCP.
         """
         return self.read_bool(0x1030, 0)
 
     def set_use_static_ip(self, use_dhcp: bool):
         """
         Writes parameter 0x1030 — Use Static IP (BOOL).
-        True = DHCP, False = static IP
-        Returns error code.
+        Returns True = DHCP, False = static IP.
         """
-        return self.write_bool(0x1030, 0, use_dhcp)
+        self.write_bool(0x1030, 0, use_dhcp)
     
     def get_customer_interface_type(self):
         """
@@ -754,9 +791,7 @@ class SchunkFmsDriver:
             3 = Ethernet/IP
             4 = Plain Ethernet
         """
-        err, value = self.read_enum(0x1032, 0)
-        if err != 0 or value is None:
-            return None
+        value = self.read_enum(0x1032, 0)
         iface_map = {
             0: "Unknown",
             1: "EtherCat",
@@ -765,67 +800,6 @@ class SchunkFmsDriver:
             4: "Plain Ethernet"
         }
         return iface_map.get(value, f"Invalid ({value})")
-
-
-    def write_uint8(self, index: int, subindex: int, val: int):
-        return self.write_parameter(index, subindex, struct.pack('<B', val))
-
-    def write_uint16(self, index: int, subindex: int, val: int):
-        return self.write_parameter(index, subindex, struct.pack('<H', val))
-
-    def write_uint32(self, index: int, subindex: int, val: int):
-        return self.write_parameter(index, subindex, struct.pack('<I', val))
-
-    def write_int32(self, index: int, subindex: int, val: int):
-        return self.write_parameter(index, subindex, struct.pack('<i', val))
-
-    def write_float(self, index: int, subindex: int, val: float):
-        return self.write_parameter(index, subindex, struct.pack('<f', val))
-
-    def write_bool(self, index: int, subindex: int, val: bool):
-        return self.write_parameter(index, subindex, struct.pack('<B', int(bool(val))))
-
-    def write_enum(self, index: int, subindex: int, val: int):
-        return self.write_parameter(index, subindex, struct.pack('<B', val))
-
-    def write_char(self, index: int, subindex: int, val: str):
-        if not val or len(val) != 1:
-            raise ValueError("CHAR must be a single ASCII character")
-        return self.write_parameter(index, subindex, struct.pack('<B', ord(val)))
-    
-    def read_uint8(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<B', value)[0] if err == 0 and len(value) >= 1 else None
-
-    def read_uint16(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<H', value)[0] if err == 0 and len(value) >= 2 else None
-
-    def read_uint32(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<I', value)[0] if err == 0 and len(value) >= 4 else None
-
-    def read_int32(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<i', value)[0] if err == 0 and len(value) >= 4 else None
-
-    def read_float(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<f', value)[0] if err == 0 and len(value) >= 4 else None
-
-    def read_bool(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, bool(struct.unpack('<B', value)[0]) if err == 0 and len(value) >= 1 else None
-
-    def read_enum(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, struct.unpack('<B', value)[0] if err == 0 and len(value) >= 1 else None
-
-    def read_char(self, index: int, subindex: int):
-        err, value = self.read_parameter(index, subindex)
-        return err, chr(struct.unpack('<B', value)[0]) if err == 0 and len(value) >= 1 else None
-
-    # --- Internal helpers ---
 
     def _recv_all(self, n):
         """

@@ -96,20 +96,18 @@ class FtsRosNode:
         # Interface Box Configuration
         rospy.loginfo("Interface Box Configuration:")
         rate_map = {0: "1 kHz", 1: "500 Hz", 2: "250 Hz", 3: "100 Hz"}
-        err, rate = self.driver.get_udp_output_rate()
-        rate_parsed = rate_map.get(rate, f"[invalid: {rate}]") if err == 0 else "[error]"
+        rate = self.driver.get_udp_output_rate()
+        rate_parsed = rate_map.get(rate, f"[invalid: {rate}]")
         rospy.loginfo(f"\tUDP Output Rate: {rate_parsed}")
 
-        err, scaling = self.driver.get_force_torque_scaling()
-        factor_parsed = scaling if err == 0 else "[error]"
+        scaling = self.driver.get_force_torque_scaling()
+        factor_parsed = scaling
         rospy.loginfo(f"\tForce/Torque Scaling Factor: {factor_parsed}")
 
-        err, use_dhcp = self.driver.get_use_static_ip()
+        use_dhcp = self.driver.get_use_static_ip()
         ip_parsed = "DHCP" if use_dhcp else "Static IP"
-        if err == 0:
-            rospy.loginfo(f"\tIP Mode: {ip_parsed}")
-        else:
-            rospy.loginfo(f"\tIP Mode: [error]")
+        
+        rospy.loginfo(f"\tIP Mode: {ip_parsed}")
 
         rospy.loginfo(f"\tCustomer Interface Type: {self.driver.get_customer_interface_type()}")
 
@@ -187,32 +185,23 @@ class FtsRosNode:
 
     def _handle_tare(self, req):
         try:
-            err = self.driver.tare()
-            if err != 0:
-                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+            self.driver.tare()
             return TriggerResponse(success=True, message="tare executed")
         except Exception as e:
-            rospy.logerr("Tare failed: %s", traceback.format_exc())
             return TriggerResponse(success=False, message=str(e))
 
     def _handle_restart(self, req):
         try:
-            err = self.driver.restart()
-            if err != 0:
-                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+            self.driver.restart()
             return TriggerResponse(success=True, message="restart executed")
         except Exception as e:
-            rospy.logerr("Restart failed: %s", traceback.format_exc())
             return TriggerResponse(success=False, message=str(e))
 
     def _handle_reset_tare(self, req):
         try:
-            err = self.driver.reset_tare()
-            if err != 0:
-                return TriggerResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+            self.driver.reset_tare()
             return TriggerResponse(success=True, message="reset_tare executed")
         except Exception as e:
-            rospy.logerr("Reset tare failed: %s", traceback.format_exc())
             return TriggerResponse(success=False, message=str(e))
 
     def _handle_set_noise_filter_window(self, req):
@@ -220,25 +209,19 @@ class FtsRosNode:
             valid_values = [1,2,4,8,16]
             if not req.window_size in valid_values:
                 return SetNoiseFilterWindowResponse(success=False, message=f"Window size {req.window_size} not allowed! Allowed values: {valid_values}")
-            err = self.driver.set_noise_filter(valid_values.index(req.window_size))
-            if err != 0:
-                return SetNoiseFilterWindowResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
-            return SetNoiseFilterWindowResponse(success=True, message="noise filter set")
+            self.driver.set_noise_filter(valid_values.index(req.window_size))
+            return SetNoiseFilterWindowResponse(success=True, message=f"")
         except Exception as e:
-            rospy.logerr("Set noise filter: %s", traceback.format_exc())
             return SetNoiseFilterWindowResponse(success=False, message=str(e))
 
     def _handle_set_udp_rate(self, req):
         try:
             valid_values = [1000,500,250,100]
             if not req.rate in valid_values:
-                return SetUdpRateResponse(success=False, message=f"Window size {req.window_size} not allowed! Allowed values: {valid_values}")
-            err = self.driver.set_udp_output_rate(valid_values.index(req.rate))
-            if err != 0:
-                return SetUdpRateResponse(success=False, message=f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
-            return SetUdpRateResponse(success=True, message="Udp rate set")
+                return SetUdpRateResponse(success=False, message=f"Window size {req.rate} not allowed! Allowed values: {valid_values}")
+            self.driver.set_udp_output_rate(valid_values.index(req.rate))
+            return SetUdpRateResponse(success=True, message=f"")
         except Exception as e:
-            rospy.logerr("Set udp rate failed: %s", traceback.format_exc())
             return SetUdpRateResponse(success=False, message=str(e))
 
     def _on_shutdown(self):
