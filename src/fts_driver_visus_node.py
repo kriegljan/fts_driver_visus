@@ -4,14 +4,14 @@ import threading
 import traceback
 from std_srvs.srv import Trigger, TriggerResponse
 from geometry_msgs.msg import WrenchStamped
-from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse, SetUdpRate, SetUdpRateResponse, SetTCP, SetTCPResponse
+from fts_driver_visus.srv import SetNoiseFilterWindow, SetNoiseFilterWindowResponse, SetUdpRate, SetUdpRateResponse, SetTCP, SetTCPResponse, SetToolSettingsSlot, SetToolSettingsSlotResponse
 from tf.transformations import euler_from_quaternion
 
 from fts_driver_visus_api.fts_driver_visus_api import SchunkFmsDriver, ERROR_CODES
 
 class FtsRosNode:
     def __init__(self):
-        rospy.init_node('fts_ros_node')
+        rospy.init_node('fts_ros_node') # log_level=rospy.DEBUG
 
         # Parameters
         self.ip = rospy.get_param('~ip', "192.168.2.113")
@@ -41,6 +41,7 @@ class FtsRosNode:
         rospy.Service('set_noise_filter_window', SetNoiseFilterWindow, self._handle_set_noise_filter_window)
         rospy.Service('set_udp_rate', SetUdpRate, self._handle_set_udp_rate)
         rospy.Service('set_tcp', SetTCP, self._handle_set_tcp)
+        rospy.Service('set_tool_settings_slot', SetToolSettingsSlot, self._handle_set_tool_settings_slot)
 
         rospy.on_shutdown(self._on_shutdown)
 
@@ -73,16 +74,17 @@ class FtsRosNode:
         rospy.loginfo(f"\tLocked: {self.driver.get_tool_settings_locked()}")
 
         # Tool center point
-        rospy.loginfo("Tool Center Point:")
-        tcp = self.driver.get_tool_center_point()
-        for k, v in tcp.items():
-            rospy.loginfo(f"\t{k}: {v:.6f}" if v is not None else f"{k}: [error]")
+        for i in range(0,4):
+            rospy.loginfo(f"Tool Center Point {i}:")
+            tcp = self.driver.get_tool_center_point(slot=i)
+            for k, v in tcp.items():
+                rospy.loginfo(f"\t{k}: {v:.6f}" if v is not None else f"{k}: [error]")
 
-        # Overrange limits
-        rospy.loginfo("Overrange Limits:")
-        limits = self.driver.get_user_overrange_limits()
-        for k, v in limits.items():
-            rospy.loginfo(f"\t{k}: {v:.3f}" if v is not None else f"{k}: [error]")
+            # Overrange limits
+            rospy.loginfo(f"Overrange Limits {i}:")
+            limits = self.driver.get_user_overrange_limits(slot=i)
+            for k, v in limits.items():
+                rospy.loginfo(f"\t{k}: {v:.3f}" if v is not None else f"{k}: [error]")
 
         # Interface Box info
         rospy.loginfo("Interface Box Parameters:")
@@ -206,6 +208,13 @@ class FtsRosNode:
         except Exception as e:
             return TriggerResponse(success=False, message=str(e))
 
+    def _handle_set_tool_settings_slot(self, req):
+        try:
+            self.driver.select_tool_settings(req.slot)
+            return SetToolSettingsSlotResponse(success=True, message="")
+        except Exception as e:
+            return SetToolSettingsSlotResponse(success=False, message=str(e))
+
     def _handle_set_noise_filter_window(self, req):
         try:
             valid_values = [1,2,4,8,16]
@@ -243,7 +252,7 @@ class FtsRosNode:
                 rx, ry, rz = euler_from_quaternion([o.x, o.y, o.z, o.w])
 
             # call driver API
-            self.driver.set_tool_center_point(tx, ty, tz, rx, ry, rz)
+            self.driver.set_tool_center_point(tx, ty, tz, rx, ry, rz, req.slot)
 
             self.driver.set_tool_settings_locked(True)
 

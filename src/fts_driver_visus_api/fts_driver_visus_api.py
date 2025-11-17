@@ -26,6 +26,10 @@ ERROR_CODES = {
     25: "Parameters Are Locked",
 }
 
+# tool slots command mapping
+TOOL_SLOTS_TCP_COMMANDS = {0: 0x0061, 1: 0x0063, 2: 0x0065, 3: 0x0067}
+TOOL_SLOTS_LIMITS_COMMANDS = {0: 0x0062, 1: 0x0064, 2: 0x0066, 3: 0x0068}
+
 # Packet header constants
 SYNC_BYTES = b'\xFF\xFF'
 HEADER_LEN = 2 + 2 + 2  # sync(2) + packet_counter(2) + length(2) == 6 bytes
@@ -619,59 +623,61 @@ class SchunkFmsDriver:
         """
         self.write_bool(0x0060, 0, not locked)
     
-    def get_tool_center_point(self):
+    def get_tool_center_point(self, slot=0):
         """
-        Reads all 6 subindices of parameter 0x0061 — Tool Center Point.
+        Reads all 6 subindices of parameter 0x0061/0x0063/0x0065/0x0067 (selected by slot 0..3) — Tool Center Point.
         Returns dict with keys: tx, ty, tz, rx, ry, rz (values in meters/radians).
         """
         result = {}
         labels = ['tx', 'ty', 'tz', 'rx', 'ry', 'rz']
+        if not slot in TOOL_SLOTS_TCP_COMMANDS.keys():
+            raise ValueError(f"Slot must be one of {TOOL_SLOTS_TCP_COMMANDS.keys()}")
         for i, label in enumerate(labels):
-            val = self.read_float(0x0061, i)
+            val = self.read_float(TOOL_SLOTS_TCP_COMMANDS[slot], i)
             result[label] = val
         return result
 
-    def set_tool_center_point(self, tx, ty, tz, rx, ry, rz):
+    def set_tool_center_point(self, tx, ty, tz, rx, ry, rz, slot):
         """
-        Writes all 6 subindices of parameter 0x0061 — Tool Center Point.
+        Writes all 6 subindices of parameter 0x0061/0x0063/0x0065/0x0067 (selected by slot 0..3) — Tool Center Point.
         Values: tx/ty/tz in meters, rx/ry/rz in radians.
         """
+        if not slot in TOOL_SLOTS_TCP_COMMANDS.keys():
+            raise ValueError(f"Slot must be one of {TOOL_SLOTS_TCP_COMMANDS.keys()}")
         values = [tx, ty, tz, rx, ry, rz]
         for i, val in enumerate(values):
-            self.write_float(0x0061, i, val)
+            self.write_float(TOOL_SLOTS_TCP_COMMANDS[slot], i, val)
 
 
-    def get_user_overrange_limits(self):
+    def get_user_overrange_limits(self, slot=0):
         """
-        Reads all 12 subindices of parameter 0x0062 — Overrange Limits.
+        Reads all 12 subindices of parameter 0x0062/0x0064/0x0066/0x0068 (selected by slot 0..3) — Overrange Limits.
         Returns dict with keys: fx_pos, fx_neg, fy_pos, fy_neg, ..., tz_neg
         """
         result = {}
         labels = ['fx_pos', 'fx_neg', 'fy_pos', 'fy_neg', 'fz_pos', 'fz_neg',
                 'tx_pos', 'tx_neg', 'ty_pos', 'ty_neg', 'tz_pos', 'tz_neg']
+        if not slot in TOOL_SLOTS_LIMITS_COMMANDS.keys():
+            raise ValueError(f"Slot must be one of {TOOL_SLOTS_LIMITS_COMMANDS.keys()}")
         for i, label in enumerate(labels):
-            val = self.read_float(0x0062, i)
+            val = self.read_float(TOOL_SLOTS_LIMITS_COMMANDS[slot], i)
             result[label] = val
         return result
 
-    def set_user_overrange_limits(self, **kwargs):
+    def set_user_overrange_limits(self, fx_pos, fx_neg, fy_pos, fy_neg, fz_pos, fz_neg, tx_pos, tx_neg, ty_pos, ty_neg, tz_pos, tz_neg, slot=0):
         """
-        Writes any subset of overrange limits to parameter 0x0062.
-        Accepts keyword args: fx_pos=..., fx_neg=..., ..., tz_neg=...
-        Returns dict of error codes per written subindex.
+        Writes any subset of overrange limits to parameter 0x0062/0x0064/0x0066/0x0068 (selected by slot 0..3).
+        Throws exception on error.
         """
         label_to_index = {
-            'fx_pos': 0, 'fx_neg': 1, 'fy_pos': 2, 'fy_neg': 3,
-            'fz_pos': 4, 'fz_neg': 5, 'tx_pos': 6, 'tx_neg': 7,
-            'ty_pos': 8, 'ty_neg': 9, 'tz_pos': 10, 'tz_neg': 11
+            0: fx_pos, 1: fx_neg, 2: fy_pos, 3: fy_neg,
+            4: fz_pos, 5: fz_neg, 6: tx_pos, 7: tx_neg,
+            8: ty_pos, 9: ty_neg, 10: tz_pos, 11: tz_neg
         }
-        result = {}
-        for label, value in kwargs.items():
-            if label not in label_to_index:
-                result[label] = 'invalid_label'
-                continue
-            idx = label_to_index[label]
-            self.write_float(0x0062, idx, value)
+        if not slot in TOOL_SLOTS_LIMITS_COMMANDS.keys():
+            raise ValueError(f"Slot must be one of {TOOL_SLOTS_LIMITS_COMMANDS.keys()}")
+        for idx, value in label_to_index.items():
+            self.write_float(TOOL_SLOTS_LIMITS_COMMANDS[slot], idx, value)
 
 
     def get_interface_vendor_name(self):

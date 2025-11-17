@@ -29,16 +29,17 @@ def main():
         print("Locked:", driver.get_tool_settings_locked())
 
         # Tool center point
-        print("\n📐 Tool Center Point:")
-        tcp = driver.get_tool_center_point()
-        for k, v in tcp.items():
-            print(f"{k}: {v:.6f}" if v is not None else f"{k}: [error]")
+        for i in range(0,4):
+            print(f"Tool Center Point {i}:")
+            tcp = driver.get_tool_center_point(slot=i)
+            for k, v in tcp.items():
+                print(f"\t{k}: {v:.6f}" if v is not None else f"{k}: [error]")
 
-        # Overrange limits
-        print("\n🚨 Overrange Limits:")
-        limits = driver.get_user_overrange_limits()
-        for k, v in limits.items():
-            print(f"{k}: {v:.3f}" if v is not None else f"{k}: [error]")
+            # Overrange limits
+            print(f"Overrange Limits {i}:")
+            limits = driver.get_user_overrange_limits(slot=i)
+            for k, v in limits.items():
+                print(f"\t{k}: {v:.3f}" if v is not None else f"{k}: [error]")
 
         # Interface Box info
         print("\n📦 Interface Box Parameters:")

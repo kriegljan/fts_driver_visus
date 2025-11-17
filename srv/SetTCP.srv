@@ -1,6 +1,7 @@
 geometry_msgs/Pose Pose
 geometry_msgs/Vector3 rpy
 bool use_rpy
+uint8 slot
 ---
 bool success
 string message

@@ -60,6 +60,7 @@ add_service_files(
   SetNoiseFilterWindow.srv
   SetUdpRate.srv
   SetTCP.srv
+  SetToolSettingsSlot.srv
 )
 
 ## Generate actions in the 'action' folder
