@@ -23,7 +23,7 @@ ERROR_CODES = {
     20: "Subindex Does Not Exist",
     21: "Invalid Parameter Value Length",
     22: "Invalid Parameter Value",
-    25: "Parameters Are Locked",
+    26: "Parameters Are Locked",
 }
 
 # tool slots command mapping
