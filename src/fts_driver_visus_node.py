@@ -203,11 +203,9 @@ class FtsRosNode:
                 return False, f"{self._stream_protocol} stream already running"
             try:
                 if protocol == 'tcp':
-                    err = self.driver.start_tcp_stream(callback=self._stream_callback_publish_wrench)
+                    self.driver.start_tcp_stream(callback=self._stream_callback_publish_wrench)
                 else:
-                    err = self.driver.start_udp_stream(callback=self._stream_callback_publish_wrench)
-                if err != 0:
-                    raise Exception(f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+                    self.driver.start_udp_stream(callback=self._stream_callback_publish_wrench)
             except Exception as e:
                 rospy.logerr("Failed to start %s stream: %s\n%s", protocol, str(e), traceback.format_exc())
                 return False, str(e)
@@ -221,11 +219,9 @@ class FtsRosNode:
                 return False, "not running or different protocol"
             try:
                 if protocol == 'tcp':
-                    err = self.driver.stop_tcp_stream()
+                    self.driver.stop_tcp_stream()
                 else:
-                    err = self.driver.stop_udp_stream()
-                if err != 0:
-                    raise Exception(f"Failed, error code {err}: {ERROR_CODES.get(err, 'Unknown')}")
+                    self.driver.stop_udp_stream()
             except Exception as e:
                 rospy.logerr("Failed to stop %s stream: %s\n%s", protocol, str(e), traceback.format_exc())
             # assume that the stream has stop anyways (to allow for restart)
@@ -258,7 +254,7 @@ class FtsRosNode:
 
     def _handle_restart(self, req):
         try:
-            self.driver.restart()
+            self.driver.restart_module()
             return TriggerResponse(success=True, message="restart executed")
         except Exception as e:
             return TriggerResponse(success=False, message=str(e))
